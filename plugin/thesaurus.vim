@@ -1,9 +1,9 @@
 " thesaurus.vim - find synonyms for a word
 " Author: Viktor Kojouharov
-" Version: 1
+" Version: 0.2
 " Uses: Hunspell thesaurus files
 " Uses: NLTK python module
-" Date: 27.01.09
+" Date: 28.07.09
 "
 " Usage:
 "   Use the Thesaurus normal mode command to find the synonyms for the word
@@ -25,7 +25,7 @@ let g:loaded_thes = 1
 
 function! s:isPythonInstalled()
     if !has('python')
-        echoerr "lookup.vim requires vim compiled with +python"
+        echoerr "thesaurus.vim requires vim compiled with +python"
     endif
 
     return has('python')
@@ -41,9 +41,13 @@ python << PYTHONEOF
 
 import vim
 import re
-from nltk.stem.porter import *
 
-stemmer = PorterStemmer()
+try:
+    from nltk.stem.porter import *
+
+    stemmer = PorterStemmer()
+except ImportError:
+    stemmer = False
 
 def lookup(word, dict):
     f = open(dict + '.idx', 'r')
@@ -59,12 +63,15 @@ def lookup(word, dict):
     if cap:
         word = word.lower()
 
-    stem = stemmer.stem(word)
-    if word != stem:
-        stemmed = lookup(stem, dict)
+    if stemmer:
+        stem = stemmer.stem(word)
+        if word != stem:
+            stemmed = lookup(stem, dict)
+            if len(stemmed):
+                stemmed[0:0] = ["Stem obtained from \"" + word + "\""]
 
     for line in f:
-        line = line.strip();
+        line = line.strip()
 
         if word[0] > line[0]:
             break
@@ -102,7 +109,10 @@ def lookup(word, dict):
         if lines > 0:
             synonyms = line.split('|')
             inner = []
-            results.append(word + ' ' + synonyms[0])
+            if cap:
+                results.append(word.capitalize() + ' ' + synonyms[0])
+            else:
+                results.append(word + ' ' + synonyms[0])
             results.append(inner)
 
             for i in range(1, len(synonyms)):
@@ -160,6 +170,12 @@ function! s:Lookup()
     let word = expand("<cword>")
     execute "python lookup('" . word . "', '" . dict . "')"
 
+    if len(g:lookup_meaning) == 0
+        unlet g:lookup_meaning
+        echo "No synonyms found"
+        return
+    endif
+
     let s:b_cur = winbufnr(0)
     silent! split __Synonyms__
     " Mark the buffer as scratch
@@ -179,10 +195,12 @@ function! s:Lookup()
     let output = "\n"
     while index < len(g:lookup_meaning)
         if type(g:lookup_meaning[index]) == 1 " String
+            if g:lookup_meaning[index][0:17] == 'Stem obtained from' && output != "\n"
+                let output = output . "\n"
+            endif
             let output = output . g:lookup_meaning[index] . "\n"
         elseif type(g:lookup_meaning[index]) == 3 "Array of synonyms
             for j in g:lookup_meaning[index]
-                let j = substitute(j, ' ([^)]\+)$', '', '')
                 let output = output . ' ' . j . "\n"
             endfor
         endif
@@ -201,10 +219,17 @@ function! s:UseSynonym(line)
     if line =~ '^ \w\+'
         let syn = substitute(line, "^ ", '', '')
         let syn = substitute(syn, "\n$", '', '')
+        let syn = substitute(syn, ' ([^)]\+)$', '', '')
 
         bwipeout!
 
-        execute "normal edbxi" . syn
+        let pos = getpos('.')
+        let line = getline(pos[1])
+        if line[pos[2]] =~ '\w'
+            execute "normal edbxi" . syn
+        else
+            execute "normal bdei " . syn
+        endif
     endif
 endfunction
 
@@ -212,11 +237,15 @@ function! s:setupSyntax()
   syn clear
   setlocal ft=thesaurus
 
+  syn match     ThesStem        "^Stem obtained from " contains=ThesStemWord
+  syn match     ThesStemWord    "\"\w\+\"$" contained
   syn match 	ThesHeader 	display "\w\+\s\+(.\+)$" contains=ThesType
   syn match     ThesType        "(.\+)$" contained
   syn match 	ThesSyn 	"^ [[:alnum:][:space:]-]\+"
   syn match     ThesHelp        "<ESC>.*$"
 
+  hi def link ThesStem  	Title
+  hi def link ThesStemWord	String
   hi def link ThesHeader 	Statement
   hi def link ThesType  	Number
   hi def link ThesSyn 		Special
